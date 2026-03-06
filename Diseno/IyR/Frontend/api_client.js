@@ -146,19 +146,6 @@ const apiClient = {
     });
   },
 
-  pvpLogin(credentials) {
-    return request("pvp-auth/login", {
-      method: "POST",
-      body: credentials,
-    });
-  },
-
-  pvpSignupDirect(payload) {
-    return request("pvp-auth/signup-direct", {
-      method: "POST",
-      body: payload,
-    });
-  },
 
   signup(payload) {
     return request("auth/signup", {
@@ -223,23 +210,7 @@ const apiClient = {
     });
   },
 
-  createTorneo(accessToken, payload) {
-    return request("torneos", {
-      method: "POST",
-      token: accessToken,
-      body: payload,
-    });
-  },
-
-  joinTorneo(accessToken, torneoId, payload = {}) {
-    return request(`torneos/${torneoId}/unirse`, {
-      method: "POST",
-      token: accessToken,
-      body: payload,
-    });
-  },
-
-    getMyGameStats(accessToken, juegoId) {
+  getMyGameStats(accessToken, juegoId) {
     return request("game-stats/me", {
       method: "POST",
       token: accessToken,
@@ -248,8 +219,6 @@ const apiClient = {
   },
 
   createGameSession(accessToken, payload) {
-    // Registrar resultado de una partida jugada
-    // POST /game-sessions  body: { juegoId, puntaje, resultado, cambioElo, ... }
     return request("game-sessions", {
       method: "POST",
       token: accessToken,
@@ -257,43 +226,14 @@ const apiClient = {
     });
   },
 
-  createPvpMatch(accessToken, payload) {
-    return request("pvp/match", {
-      method: "POST",
+  updateMyGameStats(accessToken, payload) {
+    return request("game-stats/me", {
+      method: "PATCH",
       token: accessToken,
       body: payload,
     });
   },
 
-  joinPvpMatch(accessToken, matchId, payload) {
-    return request(`pvp/match/${matchId}/join`, {
-      method: "POST",
-      token: accessToken,
-      body: payload,
-    });
-  },
-
-  getPvpMatch(accessToken, matchId) {
-    return request(`pvp/match/${matchId}`, {
-      method: "GET",
-      token: accessToken,
-    });
-  },
-
-  movePvpMatch(accessToken, matchId, payload) {
-    return request(`pvp/match/${matchId}/move`, {
-      method: "POST",
-      token: accessToken,
-      body: payload,
-    });
-  },
-
-  forfeitPvpMatch(accessToken, matchId) {
-    return request(`pvp/match/${matchId}/forfeit`, {
-      method: "POST",
-      token: accessToken,
-    });
-  },
 };
 
 export { apiClient, authStorage, request };
