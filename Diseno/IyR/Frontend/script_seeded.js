@@ -22,6 +22,15 @@ const difficultyLevels = [
   { key: "maestro", label: "Profesional", givens: 24 },
 ];
 
+const hintLimitByDifficulty = {
+  "muy-facil": 6,
+  facil: 5,
+  medio: 4,
+  dificil: 3,
+  experto: 2,
+  maestro: 1,
+};
+
 let currentDifficulty = difficultyLevels[2];
 
 // ===== Theme settings =====
@@ -152,146 +161,9 @@ let seedActual = null;
 let authSession = null;
 let authBusy = false;
 let hintsUsed = 0;
-let roundCompleted = false;
-let sudokuPaused = false;
-let highlightEnabled = true;
+let hintsLimit = hintLimitByDifficulty[currentDifficulty.key] || 3;
 let errorCount = 0;
-
-function getSudokuGameCardEl() {
-  return document.querySelector("#juego-tab .sudoku-game-card");
-}
-
-function setSudokuPausedUi(paused) {
-  const card = getSudokuGameCardEl();
-  card?.classList.toggle("paused", paused);
-
-  if (pauseBtn) pauseBtn.textContent = paused ? "Reanudar" : "Pausar";
-}
-
-function syncNoteModeUi() {
-  if (!toggleNotesBtn) return;
-  toggleNotesBtn.classList.toggle("active", noteMode);
-  toggleNotesBtn.setAttribute("aria-pressed", noteMode ? "true" : "false");
-  toggleNotesBtn.textContent = noteMode ? "Notas: ON" : "Notas: OFF";
-}
-
-function syncHighlightsUi() {
-  if (!toggleHighlightsBtn) return;
-  toggleHighlightsBtn.classList.toggle("active", highlightEnabled);
-  toggleHighlightsBtn.setAttribute("aria-pressed", highlightEnabled ? "true" : "false");
-  toggleHighlightsBtn.textContent = highlightEnabled ? "Resaltar: ON" : "Resaltar: OFF";
-}
-
-function clearSelectionHighlights() {
-  if (!boardEl) return;
-  boardEl.querySelectorAll(".cell").forEach((cell) => {
-    cell.classList.remove("highlight-peer", "highlight-same");
-  });
-}
-
-function applySelectionHighlights() {
-  clearSelectionHighlights();
-  if (!highlightEnabled) return;
-  if (!selectedCell) return;
-
-  const selectedRow = Number(selectedCell.dataset.row);
-  const selectedCol = Number(selectedCell.dataset.col);
-  const selectedValue = tableroActual?.[selectedRow]?.[selectedCol] ?? 0;
-
-  boardEl.querySelectorAll(".cell").forEach((cell) => {
-    const r = Number(cell.dataset.row);
-    const c = Number(cell.dataset.col);
-
-    if (r === selectedRow || c === selectedCol) {
-      cell.classList.add("highlight-peer");
-    }
-
-    const value = tableroActual?.[r]?.[c] ?? 0;
-    if (selectedValue !== 0 && value === selectedValue) {
-      cell.classList.add("highlight-same");
-    }
-  });
-}
-
-function showSudokuPausePopup() {
-  const existing = document.getElementById("sudoku-pause-popup");
-  if (existing) existing.remove();
-
-  const overlay = document.createElement("div");
-  overlay.id = "sudoku-pause-popup";
-  overlay.setAttribute("role", "dialog");
-  overlay.setAttribute("aria-modal", "true");
-  overlay.style.position = "fixed";
-  overlay.style.inset = "0";
-  overlay.style.background = "rgba(0,0,0,0.65)";
-  overlay.style.display = "grid";
-  overlay.style.placeItems = "center";
-  overlay.style.zIndex = "9999";
-
-  const card = document.createElement("div");
-  card.style.width = "min(92vw, 420px)";
-  card.style.padding = "1.1rem 1rem";
-  card.style.borderRadius = "14px";
-  card.style.background = "#111827";
-  card.style.color = "#f9fafb";
-  card.style.textAlign = "center";
-  card.style.boxShadow = "0 10px 35px rgba(0,0,0,0.35)";
-
-  const title = document.createElement("h3");
-  title.textContent = "Juego en pausa";
-  title.style.margin = "0 0 .35rem";
-
-  const text = document.createElement("p");
-  text.textContent = "El tiempo está detenido. Presiona reanudar para continuar.";
-  text.style.margin = "0 0 .9rem";
-  text.style.opacity = "0.92";
-
-  const resumeBtn = document.createElement("button");
-  resumeBtn.type = "button";
-  resumeBtn.textContent = "Reanudar";
-  resumeBtn.style.border = "0";
-  resumeBtn.style.borderRadius = "12px";
-  resumeBtn.style.padding = ".72rem 1.1rem";
-  resumeBtn.style.fontWeight = "800";
-  resumeBtn.style.cursor = "pointer";
-  resumeBtn.style.background = "#6B4EE6";
-  resumeBtn.style.color = "#fff";
-
-  resumeBtn.addEventListener("click", () => resumeSudoku());
-
-  card.appendChild(title);
-  card.appendChild(text);
-  card.appendChild(resumeBtn);
-  overlay.appendChild(card);
-  document.body.appendChild(overlay);
-}
-
-function hideSudokuPausePopup() {
-  const existing = document.getElementById("sudoku-pause-popup");
-  if (existing) existing.remove();
-}
-
-function pauseSudoku() {
-  if (sudokuPaused) return;
-  sudokuPaused = true;
-  if (timerInterval) clearInterval(timerInterval);
-  setSudokuPausedUi(true);
-  showSudokuPausePopup();
-}
-
-function resumeSudoku() {
-  if (!sudokuPaused) return;
-  sudokuPaused = false;
-  hideSudokuPausePopup();
-  setSudokuPausedUi(false);
-  startTimer(false);
-}
-
-function setNoteMode(on) {
-  noteMode = !!on;
-  syncNoteModeUi();
-  setStatus(noteMode ? "Modo notas: ACTIVADO (N para desactivar)" : "Modo notas: desactivado");
-}
+let roundCompleted = false;
 
 // ===== Seeds de prueba por dificultad (TEMP: luego vendrán de BD) =====
 // Nota: aquí la dificultad es el label (Principiante..Profesional)
@@ -572,16 +444,18 @@ async function loadSudokuStatsIntoProfile() {
   if (!isAuthenticated()) return;
 
   try {
+    const perfil = await apiClient.getMyProfile(authSession.accessToken);
     const stats = await apiClient.getMyGameStats(authSession.accessToken, GAME_ID_SUDOKU);
 
+    
     if (!stats || typeof stats !== "object") {
       console.warn("[stats] respuesta inválida de getMyGameStats");
       return;
     }
+    syncProfileProgress(perfil);
     profileModeStats.sudoku = [
       `Partidas jugadas: ${stats.partidasJugadas ?? 0}`,
       `Elo: ${stats.elo ?? 0}`,
-      `Victorias: ${stats.victorias ?? 0} · Derrotas: ${stats.derrotas ?? 0} · Empates: ${stats.empates ?? 0}`,
       stats.ligaId ? `Liga: ${stats.ligaId}` : "Liga: -",
     ];
   } catch (e) {
@@ -596,9 +470,11 @@ async function showModeDetail(modeKey) {
     card.classList.toggle("active", card.dataset.mode === modeKey);
   });
 
+  /*
   if (modeKey === "sudoku") {
     await loadSudokuStatsIntoProfile();
   }
+  */
 
   const stats = profileModeStats[modeKey];
   if (!stats || !modeDetailTitle || !modeDetailList) return;
@@ -675,19 +551,17 @@ function initProfileUi() {
 
 
 // ===== Sudoku game logic =====
-function setTab(mode) {
-  if (mode === "juego" && pvpState.active && pvpState.matchStatus !== "ACTIVE") {
-    mode = "pvp";
-    setPvpStatus("El tablero se habilita cuando el rival se conecte.", "info");
-  }
-
+async function setTab(mode) {
   const isHome = mode === "inicio";
   const isGame = mode === "juego";
   const isProfile = mode === "perfil";
   const isTorneos = mode === "torneos";
   const isPvp = mode === "pvp";
   const isLogin = mode === "login";
-
+  if(mode === "perfil"){
+    await loadSudokuStatsIntoProfile();
+    await showModeDetail("sudoku");
+  }
   inicioTab.classList.toggle("hidden", !isHome);
   juegoTab.classList.toggle("hidden", !isGame);
   perfilTab.classList.toggle("hidden", !isProfile);
@@ -852,9 +726,6 @@ function syncAuthUi() {
   if (switchToLoginFromForgotBtn) switchToLoginFromForgotBtn.disabled = authBusy;
   if (switchToLoginFromResetBtn) switchToLoginFromResetBtn.disabled = authBusy;
   if (switchToLoginFromVerifyBtn) switchToLoginFromVerifyBtn.disabled = authBusy;
-  if (pvpFindRivalBtn) pvpFindRivalBtn.disabled = pvpBusy;
-  if (pvpCopyLinkBtn) pvpCopyLinkBtn.disabled = pvpBusy || !pvpInviteLink;
-  if (pvpForfeitBtn) pvpForfeitBtn.disabled = authBusy || pvpBusy;
 }
 
 function setAuthBusyState(isBusy) {
@@ -866,11 +737,7 @@ function saveAuthSession(session) {
   authSession = session || null;
 
   if (authSession) authStorage.setSession(authSession);
-  else {
-    authStorage.clearSession();
-    resetPvpState();
-    setPvpStatus("");
-  }
+  else authStorage.clearSession();
 
   syncAuthUi();
   syncProfileIdentity();
@@ -886,17 +753,8 @@ async function hydrateSession(session) {
     throw new Error("Session without access token");
   }
 
-  let tokenPayload = {};
-  try {
-    const [, payload] = String(session.accessToken).split(".");
-    if (payload) {
-      const normalized = payload.replace(/-/g, "+").replace(/_/g, "/");
-      const decoded = atob(normalized);
-      tokenPayload = JSON.parse(decoded);
-    }
-  } catch {}
-
-  const verifiedUser = tokenPayload || {};
+  const verification = await apiClient.verifyToken(session.accessToken);
+  const verifiedUser = verification?.user || {};
   const sessionUser = session.user || {};
 
   const user = {
@@ -1057,578 +915,7 @@ function initTheme() {
   });
 }
 
-function getCurrentUserId() {
-  return authSession?.user?.id || authSession?.user?.sub || null;
-}
-
-function getTokenC1() {
-  return authSession?.tokenC1 || authSession?.accessToken || null;
-}
-
-function getPvpAccessToken() {
-  return authSession?.pvpAccessToken || null;
-}
-
-async function ensurePvpSessionWithCredentials(email, password, name = "") {
-  const currentToken = getPvpAccessToken();
-  if (currentToken) return currentToken;
-
-  try {
-    const login = await apiClient.pvpLogin({ email, password });
-    return login?.accessToken || null;
-  } catch (loginError) {
-    const loginMessage = String(getErrorMessage(loginError, "") || "").toLowerCase();
-    const canAutoCreate =
-      loginMessage.includes("not found") ||
-      loginMessage.includes("no existe") ||
-      loginMessage.includes("usuario") ||
-      loginError?.status === 404;
-
-    if (!canAutoCreate) {
-      throw loginError;
-    }
-
-    await apiClient.pvpSignupDirect({ email, password, name: name || email.split("@")[0] });
-    const loginAfterSignup = await apiClient.pvpLogin({ email, password });
-    return loginAfterSignup?.accessToken || null;
-  }
-}
-
-function setPvpStatus(message = "", tone = "info") {
-  if (!pvpStatusEl) return;
-  pvpStatusEl.textContent = message;
-  pvpStatusEl.classList.remove("ok", "error");
-  if (tone === "ok") pvpStatusEl.classList.add("ok");
-  if (tone === "error") pvpStatusEl.classList.add("error");
-}
-
-function parsePvpInviteFromUrl() {
-  const params = new URLSearchParams(window.location.search);
-  const matchId = params.get("matchId")?.trim() || "";
-  const torneoId = params.get("torneoId")?.trim() || "";
-  return { matchId, torneoId };
-}
-
-function removePvpInviteFromUrl() {
-  const nextUrl = new URL(window.location.href);
-  nextUrl.searchParams.delete("matchId");
-  nextUrl.searchParams.delete("torneoId");
-  window.history.replaceState({}, "", nextUrl.toString());
-}
-
-function buildPvpInviteLink(matchId, torneoId = "") {
-  const inviteUrl = new URL(window.location.href);
-  inviteUrl.searchParams.set("matchId", matchId);
-  if (torneoId) inviteUrl.searchParams.set("torneoId", torneoId);
-  return inviteUrl.toString();
-}
-
-function setPvpInviteLink(link = "") {
-  pvpInviteLink = link;
-  if (pvpInviteLinkEl) {
-    if (link) {
-      pvpInviteLinkEl.classList.remove("hidden");
-      pvpInviteLinkEl.href = link;
-      pvpInviteLinkEl.textContent = link;
-    } else {
-      pvpInviteLinkEl.classList.add("hidden");
-      pvpInviteLinkEl.href = "#";
-      pvpInviteLinkEl.textContent = "";
-    }
-  }
-  syncAuthUi();
-}
-
-async function resolvePvpTorneoId(preselectedId = "") {
-  return preselectedId?.trim() || pvpInviteTorneoId || pvpAutoTorneoId || pvpState.torneoId || "";
-}
-
-function isPvpNotEnrolledError(error) {
-  const message = String(getErrorMessage(error, "") || "").toLowerCase();
-  return (error?.status === 403 && message.includes("inscrito")) || message.includes("particip");
-}
-
-function buildAutoPvpTorneoPayload() {
-  const now = new Date();
-  const end = new Date(now.getTime() + (14 * 24 * 60 * 60 * 1000));
-  const stamp = now.toISOString().replace(/[:.]/g, "-");
-
-  return {
-    nombre: `PvP Auto ${stamp}`,
-    descripcion: "Torneo PvP autogenerado para emparejamiento rapido.",
-    esPublico: true,
-    tipo: "PVP",
-    fechaInicio: now.toISOString(),
-    fechaFin: end.toISOString(),
-    recurrencia: "NINGUNA",
-    configuracion: {},
-  };
-}
-
-async function createAndJoinAutoPvpTorneo() {
-  const torneo = await apiClient.createTorneo(authSession.accessToken, buildAutoPvpTorneoPayload());
-  const torneoId = torneo?._id || torneo?.id;
-  if (!torneoId) {
-    throw new Error("No se pudo obtener el ID del torneo PvP creado.");
-  }
-
-  try {
-    await apiClient.joinTorneo(authSession.accessToken, torneoId, {});
-  } catch (error) {
-    const message = String(getErrorMessage(error, "") || "").toLowerCase();
-    if (!message.includes("ya est") && error?.status !== 409) {
-      throw error;
-    }
-  }
-
-  return torneoId;
-}
-
-async function ensureJoinedInTorneo(torneoId) {
-  if (!torneoId) {
-    throw new Error("El link no contiene torneoId para autoinscripcion.");
-  }
-
-  try {
-    await apiClient.joinTorneo(authSession.accessToken, torneoId, {});
-  } catch (error) {
-    const message = String(getErrorMessage(error, "") || "").toLowerCase();
-    const alreadyJoined = message.includes("ya est") || error?.status === 409;
-    if (!alreadyJoined) throw error;
-  }
-}
-
-async function handlePvpCopyInviteLink() {
-  if (!pvpInviteLink) {
-    setPvpStatus("Primero crea una partida para obtener un link.", "error");
-    return;
-  }
-
-  try {
-    await navigator.clipboard.writeText(pvpInviteLink);
-    setPvpStatus("Link copiado al portapapeles.", "ok");
-  } catch {
-    setPvpStatus("No se pudo copiar automaticamente. Copialo manualmente del enlace mostrado.", "error");
-  }
-}
-
-function initPvpInviteFlowFromUrl() {
-  const invite = parsePvpInviteFromUrl();
-  pvpInviteMatchId = invite.matchId;
-  pvpInviteTorneoId = invite.torneoId;
-  if (!pvpInviteMatchId) return;
-  setTab("pvp");
-  setPvpStatus("Invitacion detectada. Inicia sesion para entrar al match.", "info");
-}
-
-function setPvpBusyState(isBusy) {
-  pvpBusy = isBusy;
-  if (pvpFindRivalBtn) pvpFindRivalBtn.disabled = isBusy;
-  if (pvpCopyLinkBtn) pvpCopyLinkBtn.disabled = isBusy || !pvpInviteLink;
-  if (pvpForfeitBtn) pvpForfeitBtn.disabled = isBusy;
-}
-
-function stopPvpPolling() {
-  if (!pvpPollInterval) return;
-  clearInterval(pvpPollInterval);
-  pvpPollInterval = null;
-}
-
-function setPvpModeUI(isActive) {
-  pvpLiveControls?.classList.toggle("hidden", !isActive);
-  difficultySelect.disabled = isActive;
-  hintBtn.disabled = isActive;
-  if (isActive) noteMode = false;
-  if (isActive) {
-    difficultyLabel.textContent = "Dificultad: PvP";
-  } else {
-    difficultyLabel.textContent = `Dificultad: ${currentDifficulty.label}`;
-  }
-}
-
-function resetPvpState() {
-  stopPvpPolling();
-  pvpState = {
-    active: false,
-    matchId: null,
-    torneoId: "",
-    matchStatus: "WAITING",
-    rivalId: null,
-    startedAt: null,
-  };
-  pvpBoardInitialized = false;
-  setPvpModeUI(false);
-}
-
-class SeededRandom {
-  constructor(seed) {
-    this.state = ((seed % 2147483646) + 2147483646) % 2147483646 + 1;
-  }
-
-  next() {
-    this.state = (this.state * 16807) % 2147483647;
-    return (this.state - 1) / 2147483646;
-  }
-
-  nextInt(max) {
-    return Math.floor(this.next() * max);
-  }
-
-  shuffle(arr) {
-    const result = [...arr];
-    for (let i = result.length - 1; i > 0; i -= 1) {
-      const j = this.nextInt(i + 1);
-      [result[i], result[j]] = [result[j], result[i]];
-    }
-    return result;
-  }
-}
-
-function generatePvpBoard(seed) {
-  const rng = new SeededRandom(seed);
-  const base = [
-    [1, 2, 3, 4, 5, 6, 7, 8, 9],
-    [4, 5, 6, 7, 8, 9, 1, 2, 3],
-    [7, 8, 9, 1, 2, 3, 4, 5, 6],
-    [2, 3, 1, 5, 6, 4, 8, 9, 7],
-    [5, 6, 4, 8, 9, 7, 2, 3, 1],
-    [8, 9, 7, 2, 3, 1, 5, 6, 4],
-    [3, 1, 2, 6, 4, 5, 9, 7, 8],
-    [6, 4, 5, 9, 7, 8, 3, 1, 2],
-    [9, 7, 8, 3, 1, 2, 6, 4, 5],
-  ];
-
-  const digits = rng.shuffle([1, 2, 3, 4, 5, 6, 7, 8, 9]);
-  let grid = base.map((row) => row.map((v) => digits[v - 1]));
-
-  for (let band = 0; band < 3; band += 1) {
-    const indices = rng.shuffle([0, 1, 2]);
-    const rows = indices.map((i) => grid[band * 3 + i]);
-    for (let i = 0; i < 3; i += 1) grid[band * 3 + i] = rows[i];
-  }
-
-  for (let stack = 0; stack < 3; stack += 1) {
-    const indices = rng.shuffle([0, 1, 2]);
-    for (let row = 0; row < 9; row += 1) {
-      const cols = indices.map((i) => grid[row][stack * 3 + i]);
-      for (let i = 0; i < 3; i += 1) grid[row][stack * 3 + i] = cols[i];
-    }
-  }
-
-  const bandOrder = rng.shuffle([0, 1, 2]);
-  const reordered = [];
-  for (const b of bandOrder) {
-    for (let i = 0; i < 3; i += 1) reordered.push([...grid[b * 3 + i]]);
-  }
-  grid = reordered;
-
-  const stackOrder = rng.shuffle([0, 1, 2]);
-  for (let row = 0; row < 9; row += 1) {
-    const newRow = [];
-    for (const s of stackOrder) {
-      for (let i = 0; i < 3; i += 1) newRow.push(grid[row][s * 3 + i]);
-    }
-    grid[row] = newRow;
-  }
-
-  const solutionBoard = grid.map((row) => [...row]);
-  const positions = [];
-  for (let r = 0; r < 9; r += 1) {
-    for (let c = 0; c < 9; c += 1) positions.push([r, c]);
-  }
-  const shuffled = rng.shuffle(positions);
-  const toRemove = 40 + rng.nextInt(11);
-  const board = solutionBoard.map((row) => [...row]);
-  for (let i = 0; i < toRemove; i += 1) {
-    const [r, c] = shuffled[i];
-    board[r][c] = 0;
-  }
-
-  return { board, solutionBoard };
-}
-
-function applyPvpMatchSnapshot(match) {
-  const seed = Number(match.seed);
-  const currentUserId = String(getCurrentUserId() || "");
-  const jugador1Id = String(match.jugador1Id || "");
-  const jugador2Id = String(match.jugador2Id || "");
-  const isPlayer1 = currentUserId && currentUserId === jugador1Id;
-  const isPlayer2 = currentUserId && currentUserId === jugador2Id;
-  const myGame =
-    match.myGame ||
-    (isPlayer1 ? match.player1 : null) ||
-    (isPlayer2 ? match.player2 : null) ||
-    match.player1 ||
-    match.player2 ||
-    null;
-  if (!myGame) return;
-  pvpState.matchStatus = match.estado || pvpState.matchStatus;
-
-  const serverBoard = Array.isArray(myGame.boardState) ? myGame.boardState : null;
-  const fallbackBoard =
-    Array.isArray(tableroActual) && tableroActual.length === 9
-      ? tableroActual
-      : generatePvpBoard(seed).board;
-  const sourceBoard = serverBoard || fallbackBoard;
-  seedActual = seed;
-  puzzleInicial = sourceBoard.map((row) => [...row]);
-  tableroActual = sourceBoard.map((row) => [...row]);
-  solucion = [];
-  notas = crearNotasVacias();
-  roundCompleted = false;
-  createBoard();
-  pvpBoardInitialized = true;
-
-  const rival =
-    match.opponent ||
-    (isPlayer1 ? match.player2 : null) ||
-    (isPlayer2 ? match.player1 : null) ||
-    null;
-  const rivalId = rival?.playerId || (isPlayer1 ? jugador2Id : jugador1Id) || "Rival";
-  pvpState.rivalId = rivalId;
-  pvpState.startedAt = match.fechaInicio || pvpState.startedAt;
-
-  const myCorrect = Number(myGame.correctCells || 0);
-  const myTotal = Number(myGame.emptyCells || 0);
-  const percent = myTotal > 0 ? Math.round((myCorrect / myTotal) * 100) : 0;
-  progressFill.style.width = `${percent}%`;
-  progressText.textContent = `${myCorrect}/${myTotal} celdas correctas (${percent}%) · Rival: ${rival?.score ?? 0} pts`;
-}
-
-async function pollPvpMatchState() {
-  const pvpAccessToken = getPvpAccessToken();
-  if (!pvpState.active || !pvpState.matchId || !pvpAccessToken) return;
-  if (pvpBusy) return;
-
-  try {
-    const previousStatus = pvpState.matchStatus;
-    const match = await apiClient.getPvpMatch(pvpAccessToken, pvpState.matchId);
-    pvpState.matchStatus = match.estado || pvpState.matchStatus;
-
-    if (match.estado === "ACTIVE") {
-      if (!pvpBoardInitialized) {
-        applyPvpMatchSnapshot(match);
-      }
-      if (juegoTab.classList.contains("hidden")) setTab("juego");
-      if (previousStatus !== "ACTIVE") {
-        setPvpStatus("Partida activa. Rival conectado.", "ok");
-      }
-      return;
-    }
-
-    if (match.estado === "WAITING") {
-      setPvpStatus(`Esperando rival... Match ID: ${pvpState.matchId}`);
-      return;
-    }
-
-    if (match.estado === "FORFEIT") {
-      stopPvpPolling();
-      setPvpModeUI(false);
-      pvpState.active = false;
-      setStatus("La partida termino por abandono.", true);
-      setPvpStatus("La partida termino por abandono.", "ok");
-      resetPvpState();
-      setTab("inicio");
-      return;
-    }
-
-    if (match.estado === "FINISHED") {
-      stopPvpPolling();
-      setPvpModeUI(false);
-      pvpState.active = false;
-      const winner = match.ganadorId || "N/D";
-      setStatus(`Partida finalizada. Ganador: ${winner}.`, true);
-      setPvpStatus(`Partida finalizada. Ganador: ${winner}.`, "ok");
-      resetPvpState();
-      setTab("inicio");
-      return;
-    }
-  } catch (error) {
-    setPvpStatus(getErrorMessage(error, "No se pudo consultar el estado PvP."), "error");
-  }
-}
-
-function startPvpPolling() {
-  stopPvpPolling();
-  pvpPollInterval = setInterval(() => {
-    if (!pvpBusy) {
-      pollPvpMatchState();
-    }
-  }, 2500);
-}
-
-async function startPvpMatch(match) {
-  pvpState.active = true;
-  pvpState.matchId = match._id || pvpState.matchId;
-  pvpState.torneoId = match.torneoId || pvpState.torneoId;
-  pvpState.matchStatus = match.estado || "WAITING";
-  setPvpModeUI(true);
-  if (match.estado === "ACTIVE") {
-    applyPvpMatchSnapshot(match);
-    setTab("juego");
-  } else {
-    setTab("pvp");
-  }
-  setStatus(`Match PvP activo (${pvpState.matchId}).`, true);
-
-  if (match.estado === "ACTIVE") {
-    setPvpStatus("Rival encontrado. Iniciando partida...", "ok");
-  } else {
-    setPvpStatus(`Esperando rival... Match ID: ${pvpState.matchId}`);
-  }
-
-  startPvpPolling();
-  await pollPvpMatchState();
-}
-
-async function handlePvpFindRival(options = {}) {
-  if (!isAuthenticated()) {
-    setPvpStatus("Debes iniciar sesion para crear o unirte a una partida PvP.", "error");
-    openLoginTab("Inicia sesion para jugar PvP.", "error");
-    return;
-  }
-
-  const forcedJoinMatchId = options.joinMatchId?.trim() || "";
-  const forcedTorneoId = options.torneoId?.trim() || "";
-  const joinMatchId = forcedJoinMatchId || pvpInviteMatchId;
-  let torneoId = forcedTorneoId;
-  const tokenC1 = getTokenC1();
-  const pvpAccessToken = getPvpAccessToken();
-
-  if (!tokenC1) {
-    setPvpStatus("No se encontro token de autenticacion para PvP.", "error");
-    return;
-  }
-
-  if (!pvpAccessToken) {
-    setPvpStatus("Falta sesion PvP de Contenedor2. Cierra sesion y vuelve a iniciar para sincronizarla.", "error");
-    return;
-  }
-
-  if (!joinMatchId) {
-    torneoId = await resolvePvpTorneoId(torneoId);
-  }
-
-  setPvpBusyState(true);
-  setPvpStatus(joinMatchId ? "Uniendote al match..." : "Creando partida...");
-
-  try {
-    let match;
-    if (joinMatchId) {
-      try {
-        match = await apiClient.joinPvpMatch(pvpAccessToken, joinMatchId, { tokenC1 });
-      } catch (error) {
-        if (isPvpNotEnrolledError(error)) {
-          setPvpStatus("No estabas inscrito. Uniendote al torneo del link...", "info");
-          await ensureJoinedInTorneo(torneoId);
-          match = await apiClient.joinPvpMatch(pvpAccessToken, joinMatchId, { tokenC1 });
-        } else {
-          throw error;
-        }
-      }
-
-      pvpState.matchId = joinMatchId;
-      pvpState.torneoId = match.torneoId || torneoId;
-      pvpAutoTorneoId = pvpState.torneoId || pvpAutoTorneoId;
-      setPvpStatus("Te uniste al match correctamente.", "ok");
-      pvpInviteMatchId = "";
-      pvpInviteTorneoId = "";
-      removePvpInviteFromUrl();
-    } else {
-      try {
-        if (!torneoId) {
-          throw new Error("NO_TORNEO_CANDIDATO");
-        }
-
-        match = await apiClient.createPvpMatch(pvpAccessToken, { torneoId, tokenC1 });
-      } catch (error) {
-        if (!torneoId || isPvpNotEnrolledError(error)) {
-          setPvpStatus("No estabas inscrito. Creando torneo PvP y registrandote...", "info");
-          torneoId = await createAndJoinAutoPvpTorneo();
-          pvpAutoTorneoId = torneoId;
-          match = await apiClient.createPvpMatch(pvpAccessToken, { torneoId, tokenC1 });
-        } else {
-          throw error;
-        }
-      }
-
-      pvpState.matchId = match._id;
-      pvpState.torneoId = match.torneoId || torneoId;
-      pvpAutoTorneoId = pvpState.torneoId || pvpAutoTorneoId;
-      const inviteLink = buildPvpInviteLink(match._id, pvpState.torneoId);
-      setPvpInviteLink(inviteLink);
-      setPvpStatus("Link creado. Compartelo para que el jugador 2 se una.", "ok");
-    }
-
-    await startPvpMatch(match);
-  } catch (error) {
-    setPvpStatus(getErrorMessage(error, "No fue posible iniciar la partida PvP."), "error");
-  } finally {
-    setPvpBusyState(false);
-  }
-}
-
-async function tryAutoJoinPvpInvite() {
-  if (!pvpInviteMatchId || pvpInviteJoinInFlight) return;
-
-  if (!isAuthenticated()) {
-    setTab("pvp");
-    setPvpStatus("Este link es una invitacion. Inicia sesion para unirte.", "info");
-    return;
-  }
-
-  pvpInviteJoinInFlight = true;
-  try {
-    await handlePvpFindRival({
-      joinMatchId: pvpInviteMatchId,
-      torneoId: pvpInviteTorneoId,
-    });
-  } finally {
-    pvpInviteJoinInFlight = false;
-  }
-}
-
-async function handlePvpForfeit() {
-  const pvpAccessToken = getPvpAccessToken();
-  if (!pvpState.active || !pvpState.matchId || !pvpAccessToken) return;
-  if (pvpState.matchStatus !== "ACTIVE") {
-    setPvpStatus("Solo puedes abandonar cuando el match este activo.", "error");
-    return;
-  }
-
-  setPvpBusyState(true);
-  try {
-    const result = await apiClient.forfeitPvpMatch(pvpAccessToken, pvpState.matchId);
-    stopPvpPolling();
-    setPvpModeUI(false);
-    const winner = result?.ganadorId || "N/D";
-    setStatus(`Abandonaste la partida. Ganador: ${winner}.`);
-    setPvpStatus(`Partida abandonada. Ganador: ${winner}.`, "ok");
-    resetPvpState();
-    setTab("inicio");
-  } catch (error) {
-    setPvpStatus(getErrorMessage(error, "No fue posible abandonar la partida."), "error");
-  } finally {
-    setPvpBusyState(false);
-  }
-}
-
 function getProgress() {
-  if (pvpState.active) {
-    let editable = 0;
-    let correct = 0;
-    for (let r = 0; r < 9; r += 1) {
-      for (let c = 0; c < 9; c += 1) {
-        if (puzzleInicial[r][c] === 0) {
-          editable += 1;
-          if (tableroActual[r][c] !== 0) correct += 1;
-        }
-      }
-    }
-    const percentage = editable === 0 ? 100 : Math.round((correct / editable) * 100);
-    return { correct, editable, percentage };
-  }
-
   let editable = 0;
   let correct = 0;
 
@@ -1702,86 +989,37 @@ function showSudokuCompletionPopup(score) {
 }
 
 function calculateSudokuScore() {
-  const TIME_PENALTY_PER_SECOND = 2;
-  const HINT_PENALTY = 75;
+  const { correct } = getProgress();
 
-  const penalty = seconds * TIME_PENALTY_PER_SECOND + hintsUsed * HINT_PENALTY;
-  return Math.max(0, 1000 - penalty);
+  const CORRECT_CELL_POINTS = 35;
+  const TIME_PENALTY_PER_SECOND = 2;
+  const ERROR_PENALTY = 120;
+  const HINT_PENALTY = 90;
+
+  const progressPoints = Math.max(0, correct * CORRECT_CELL_POINTS);
+  const timePenalty = Math.max(0, seconds * TIME_PENALTY_PER_SECOND);
+  const errorPenalty = Math.max(0, errorCount * ERROR_PENALTY);
+  const hintPenalty = Math.max(0, hintsUsed * HINT_PENALTY);
+
+  const score = progressPoints - timePenalty - errorPenalty - hintPenalty;
+  return Math.max(0, Math.round(score));
 }
 
-async function finishSudokuWithScore() {
+function finishSudokuWithScore() {
   if (roundCompleted) return;
   roundCompleted = true;
 
   const score = calculateSudokuScore();
-
   setStatus(
-    `¡Sudoku completado! Puntaje final: ${score} (tiempo: ${seconds}s, pistas: ${hintsUsed}).`,
+    `¡Sudoku completado! Puntaje final: ${score} (tiempo: ${seconds}s, errores: ${errorCount}, pistas: ${hintsUsed}/${hintsLimit}).`,
     true,
   );
-
   if (timerInterval) clearInterval(timerInterval);
-
-  try {
-    const accessToken = authStorage.getAccessToken();
-
-    if (accessToken) {
-      await apiClient.createGameSession(accessToken, {
-        juegoId: GAME_ID_SUDOKU,
-        puntaje: score,
-        resultado: "victoria",
-        cambioElo: 10,
-      });
-    }
-  } catch (error) {
-    console.error("No se pudo registrar la partida:", error);
-  }
 
   showSudokuCompletionPopup(score);
 }
 
-function syncSudokuStatsUi() {
-  if (errorsCountEl) errorsCountEl.textContent = `Errores: ${errorCount}`;
-  if (hintsUsedEl) hintsUsedEl.textContent = `Pistas: ${hintsUsed}`;
-}
-
-function getCorrectCountsByNumber() {
-  const counts = Array(10).fill(0);
-  if (!tableroActual?.length || !solucion?.length) return counts;
-
-  for (let r = 0; r < 9; r += 1) {
-    for (let c = 0; c < 9; c += 1) {
-      const v = tableroActual[r][c];
-      if (v !== 0 && v === solucion[r][c]) counts[v] += 1;
-    }
-  }
-  return counts;
-}
-
-function updateKeypadAvailability() {
-  if (!keypadEl) return;
-  const counts = getCorrectCountsByNumber();
-
-  keypadEl.querySelectorAll("button.chip.number").forEach((btn) => {
-    const n = Number(btn.dataset.num || btn.textContent || 0);
-    const complete = n >= 1 && n <= 9 ? counts[n] >= 9 : false;
-
-    btn.disabled = complete;
-    btn.classList.toggle("num-unavailable", complete);
-    btn.setAttribute("aria-disabled", complete ? "true" : "false");
-  });
-}
-
 function buildSudokuBoard(seed, huecos) {
-  sudokuPaused = false;
-  hideSudokuPausePopup();
-  setSudokuPausedUi(false);
-  noteMode = false;
-  syncNoteModeUi();
-  syncHighlightsUi();
-  errorCount = 0;
-  hintsUsed = 0;
-  syncSudokuStatsUi();
 
   seedActual = seed;
   huecosActual = Number.isInteger(huecos) ? huecos : 40;
@@ -1800,8 +1038,11 @@ function buildSudokuBoard(seed, huecos) {
 
   // 5) UI
   createBoard();
+  hintsUsed = 0;
+  errorCount = 0;
+  hintsLimit = hintLimitByDifficulty[currentDifficulty.key] || 3;
   roundCompleted = false;
-  setStatus(`Selecciona una celda para comenzar. Puntaje inicial: 1000.`);
+  setStatus(`Selecciona una celda para comenzar. Pistas disponibles: ${hintsLimit}.`);
   updateProgress();
   updateKeypadAvailability();
   startTimer(true);
@@ -1809,87 +1050,12 @@ function buildSudokuBoard(seed, huecos) {
 
 
 function fillSelected(value) {
-  if (sudokuPaused) return;
+  if (roundCompleted) return;
   if (!selectedCell) return;
 
-  const selectedCellRef = selectedCell;
   const row = Number(selectedCell.dataset.row);
   const col = Number(selectedCell.dataset.col);
   const previousValue = tableroActual?.[row]?.[col] ?? 0;
-
-  if (pvpState.active) {
-    const pvpAccessToken = getPvpAccessToken();
-    if (!pvpAccessToken || !pvpState.matchId) {
-      setStatus("No hay una partida PvP activa.");
-      return;
-    }
-    if (pvpState.matchStatus !== "ACTIVE") {
-      setStatus("Aun no hay rival conectado. Espera a que inicie el match.");
-      return;
-    }
-    if (value === "") {
-      setStatus("En PvP no puedes borrar celdas.");
-      return;
-    }
-
-    const num = Number(value);
-    if (num < 1 || num > 9 || Number.isNaN(num)) {
-      setStatus("Numero invalido (1-9)");
-      return;
-    }
-
-    if (puzzleInicial[row][col] !== 0) {
-      setStatus("No puedes modificar una celda fija.");
-      return;
-    }
-    if (tableroActual[row][col] !== 0) {
-      setStatus("Esa celda ya fue resuelta.");
-      return;
-    }
-    if (pvpBusy) return;
-
-    setPvpBusyState(true);
-    try {
-      const result = await apiClient.movePvpMatch(pvpAccessToken, pvpState.matchId, {
-        row,
-        col,
-        value: num,
-      });
-
-      const isCorrect = result?.esCorrecta === true;
-
-      if (isCorrect) {
-        tableroActual[row][col] = num;
-        selectedCellRef?.classList?.remove("error");
-        if (selectedCellRef) renderCellContent(selectedCellRef, row, col);
-        setStatus("Jugada correcta.");
-      } else {
-        if (selectedCellRef) {
-          selectedCellRef.textContent = String(num);
-        }
-        selectedCellRef?.classList?.add("error");
-        setStatus("Jugada incorrecta.");
-      }
-
-      updateProgress();
-
-      if (result?.matchTerminado) {
-        stopPvpPolling();
-        setPvpModeUI(false);
-        pvpState.active = false;
-        const winner = result?.ganadorId || "N/D";
-        setStatus(`Partida finalizada. Ganador: ${winner}.`, true);
-        setPvpStatus(`Partida finalizada. Ganador: ${winner}.`, "ok");
-      } else {
-        await pollPvpMatchState();
-      }
-    } catch (error) {
-      setStatus(getErrorMessage(error, "No fue posible enviar la jugada."));
-    } finally {
-      setPvpBusyState(false);
-    }
-    return;
-  }
 
   // No tocar celdas fijas
   if (puzzleInicial[row][col] !== 0) {
@@ -1915,7 +1081,8 @@ function fillSelected(value) {
 
   // Rango válido
   if (num < 1 || num > 9 || Number.isNaN(num)) {
-    setStatus("Número inválido (1-9)");
+    errorCount += 1;
+    setStatus(`Número inválido (1-9). Errores: ${errorCount}`);
     return;
   }
 
@@ -1938,8 +1105,8 @@ function fillSelected(value) {
   updateProgress?.();
 
   if (!valido) {
-    setStatus("Movimiento viola reglas del Sudoku");
-    applySelectionHighlights();
+    errorCount += 1;
+    setStatus(`Movimiento viola reglas del Sudoku. Errores: ${errorCount}`);
     return;
   }
 
@@ -1992,11 +1159,6 @@ function renderCellContent(cellEl, r, c) {
 }
 
 function handleNoteInput(num) {
-  if (pvpState.active) {
-    setStatus("En PvP no estan habilitadas las notas.");
-    return;
-  }
-
   if (!selectedCell) return;
 
   const row = Number(selectedCell.dataset.row);
@@ -2021,9 +1183,6 @@ function handleNoteInput(num) {
 }
 
 function createBoard() {
-  const prevSelected = selectedCellCoords
-    ? { row: selectedCellCoords.row, col: selectedCellCoords.col }
-    : null;
   boardEl.innerHTML = "";
   selectedCell = null;
   clearSelectionHighlights();
@@ -2057,21 +1216,13 @@ function createBoard() {
       cell.addEventListener("click", () => {
         if (selectedCell) selectedCell.classList.remove("selected");
         selectedCell = cell;
-        selectedCellCoords = { row: r, col: c };
         cell.classList.add("selected");
         applySelectionHighlights();
       });
 
-      if (prevSelected && prevSelected.row === r && prevSelected.col === c) {
-        selectedCell = cell;
-        cell.classList.add("selected");
-      }
-
       boardEl.appendChild(cell);
     }
   }
-
-  if (!selectedCell) selectedCellCoords = null;
 }
 
 function createSignBoard() {
@@ -2209,7 +1360,13 @@ function setupControls() {
   clearBtn.addEventListener("click", () => fillSelected(""));
 
   hintBtn.addEventListener("click", () => {
-    if (sudokuPaused) return;
+    if (roundCompleted) return;
+
+    if (hintsUsed >= hintsLimit) {
+      setStatus(`No quedan pistas para esta dificultad (${hintsLimit}).`);
+      return;
+    }
+
     const resultado = darPistaAleatoria(tableroActual, solucion);
 
     if (!resultado.ok) {
@@ -2219,7 +1376,6 @@ function setupControls() {
 
     // Aplicar pista y refrescar UI
     hintsUsed += 1;
-    syncSudokuStatsUi();
     const { row, col, valor } = resultado;
     tableroActual[row][col] = valor;
 
@@ -2233,11 +1389,11 @@ function setupControls() {
     if (estaResuelto(tableroActual)) {
       finishSudokuWithScore();
     } else {
-      setStatus(`Pista aplicada. Pistas usadas: ${hintsUsed}.`);
+      setStatus(`Pista aplicada. Pistas usadas: ${hintsUsed}/${hintsLimit}.`);
     }
   });
 
-  //  Controles teclado: números / borrar / modo notas
+  // ✅ Controles teclado: números / borrar / modo notas
   document.addEventListener("keydown", (event) => {
     if (sudokuPaused) return;
     if (!selectedCell) return;
@@ -2257,7 +1413,6 @@ function setupControls() {
     // Números 1-9
     if (/^[1-9]$/.test(event.key)) {
       const num = Number(event.key);
-      selectedNumber = num;
 
       // Shift+num o modo notas -> notas
       if (noteMode || event.shiftKey) {
@@ -2311,9 +1466,6 @@ function setupControls() {
   goToSudokuBtn?.addEventListener("click", () => setTab("juego"));
   goToTorneosBtn?.addEventListener("click", () => setTab("torneos"));
   goToPvpBtn?.addEventListener("click", () => setTab("pvp"));
-  pvpFindRivalBtn?.addEventListener("click", handlePvpFindRival);
-  pvpCopyLinkBtn?.addEventListener("click", handlePvpCopyInviteLink);
-  pvpForfeitBtn?.addEventListener("click", handlePvpForfeit);
 
   openGuideBtns.forEach((btn) => {
     btn.addEventListener("click", () => openGuide(btn.dataset.guide));
@@ -2443,28 +1595,13 @@ function setupControls() {
         user: response.user || { email },
       };
 
-      try {
-        const pvpAccessToken = await ensurePvpSessionWithCredentials(
-          email,
-          password,
-          session.user?.name || "",
-        );
-        if (pvpAccessToken) session.pvpAccessToken = pvpAccessToken;
-      } catch (pvpError) {
-        setStatus(`Sesion principal OK, pero PvP no se pudo sincronizar: ${getErrorMessage(pvpError, "Error PvP")}`);
-      }
-
       const hydrated = await hydrateSession(session);
       saveAuthSession(hydrated);
 
       loginForm.reset();
       setAuthMessage("Sesion iniciada correctamente.", "ok");
       setStatus("Sesion iniciada correctamente.", true);
-      if (pvpInviteMatchId) {
-        await tryAutoJoinPvpInvite();
-      } else {
-        setTab("inicio");
-      }
+      setTab("inicio");
     } catch (error) {
       setAuthMessage(
         getErrorMessage(error, "No fue posible iniciar sesion."),
@@ -2530,26 +1667,11 @@ function setupControls() {
           user: response.user || { name, email },
         };
 
-        try {
-          const pvpAccessToken = await ensurePvpSessionWithCredentials(
-            email,
-            password,
-            name,
-          );
-          if (pvpAccessToken) session.pvpAccessToken = pvpAccessToken;
-        } catch (pvpError) {
-          setStatus(`Cuenta creada, pero PvP no se pudo sincronizar: ${getErrorMessage(pvpError, "Error PvP")}`);
-        }
-
         const hydrated = await hydrateSession(session);
         saveAuthSession(hydrated);
         setAuthMessage("Cuenta creada e inicio de sesion exitoso.", "ok");
         setStatus("Cuenta creada e inicio de sesion exitoso.", true);
-        if (pvpInviteMatchId) {
-          await tryAutoJoinPvpInvite();
-        } else {
-          setTab("inicio");
-        }
+        setTab("inicio");
       } else {
         openVerifyTab(
           email,
@@ -2764,8 +1886,7 @@ async function bootstrapApp() {
   syncSudokuStatsUi();
   initProfileUi();
   loadDifficulty(currentDifficulty.key);
-  setTab("inicio");
-  initPvpInviteFlowFromUrl();
+  setTab("juego");
   await restoreAuthSession();
   await showModeDetail("sudoku");
 }
