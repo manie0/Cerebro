@@ -22,6 +22,15 @@ const difficultyLevels = [
   { key: "maestro", label: "Profesional", givens: 24 },
 ];
 
+const hintLimitByDifficulty = {
+  "muy-facil": 6,
+  facil: 5,
+  medio: 4,
+  dificil: 3,
+  experto: 2,
+  maestro: 1,
+};
+
 let currentDifficulty = difficultyLevels[2];
 
 // ===== Theme settings =====
@@ -152,146 +161,9 @@ let seedActual = null;
 let authSession = null;
 let authBusy = false;
 let hintsUsed = 0;
-let roundCompleted = false;
-let sudokuPaused = false;
-let highlightEnabled = true;
+let hintsLimit = hintLimitByDifficulty[currentDifficulty.key] || 3;
 let errorCount = 0;
-
-function getSudokuGameCardEl() {
-  return document.querySelector("#juego-tab .sudoku-game-card");
-}
-
-function setSudokuPausedUi(paused) {
-  const card = getSudokuGameCardEl();
-  card?.classList.toggle("paused", paused);
-
-  if (pauseBtn) pauseBtn.textContent = paused ? "Reanudar" : "Pausar";
-}
-
-function syncNoteModeUi() {
-  if (!toggleNotesBtn) return;
-  toggleNotesBtn.classList.toggle("active", noteMode);
-  toggleNotesBtn.setAttribute("aria-pressed", noteMode ? "true" : "false");
-  toggleNotesBtn.textContent = noteMode ? "Notas: ON" : "Notas: OFF";
-}
-
-function syncHighlightsUi() {
-  if (!toggleHighlightsBtn) return;
-  toggleHighlightsBtn.classList.toggle("active", highlightEnabled);
-  toggleHighlightsBtn.setAttribute("aria-pressed", highlightEnabled ? "true" : "false");
-  toggleHighlightsBtn.textContent = highlightEnabled ? "Resaltar: ON" : "Resaltar: OFF";
-}
-
-function clearSelectionHighlights() {
-  if (!boardEl) return;
-  boardEl.querySelectorAll(".cell").forEach((cell) => {
-    cell.classList.remove("highlight-peer", "highlight-same");
-  });
-}
-
-function applySelectionHighlights() {
-  clearSelectionHighlights();
-  if (!highlightEnabled) return;
-  if (!selectedCell) return;
-
-  const selectedRow = Number(selectedCell.dataset.row);
-  const selectedCol = Number(selectedCell.dataset.col);
-  const selectedValue = tableroActual?.[selectedRow]?.[selectedCol] ?? 0;
-
-  boardEl.querySelectorAll(".cell").forEach((cell) => {
-    const r = Number(cell.dataset.row);
-    const c = Number(cell.dataset.col);
-
-    if (r === selectedRow || c === selectedCol) {
-      cell.classList.add("highlight-peer");
-    }
-
-    const value = tableroActual?.[r]?.[c] ?? 0;
-    if (selectedValue !== 0 && value === selectedValue) {
-      cell.classList.add("highlight-same");
-    }
-  });
-}
-
-function showSudokuPausePopup() {
-  const existing = document.getElementById("sudoku-pause-popup");
-  if (existing) existing.remove();
-
-  const overlay = document.createElement("div");
-  overlay.id = "sudoku-pause-popup";
-  overlay.setAttribute("role", "dialog");
-  overlay.setAttribute("aria-modal", "true");
-  overlay.style.position = "fixed";
-  overlay.style.inset = "0";
-  overlay.style.background = "rgba(0,0,0,0.65)";
-  overlay.style.display = "grid";
-  overlay.style.placeItems = "center";
-  overlay.style.zIndex = "9999";
-
-  const card = document.createElement("div");
-  card.style.width = "min(92vw, 420px)";
-  card.style.padding = "1.1rem 1rem";
-  card.style.borderRadius = "14px";
-  card.style.background = "#111827";
-  card.style.color = "#f9fafb";
-  card.style.textAlign = "center";
-  card.style.boxShadow = "0 10px 35px rgba(0,0,0,0.35)";
-
-  const title = document.createElement("h3");
-  title.textContent = "Juego en pausa";
-  title.style.margin = "0 0 .35rem";
-
-  const text = document.createElement("p");
-  text.textContent = "El tiempo está detenido. Presiona reanudar para continuar.";
-  text.style.margin = "0 0 .9rem";
-  text.style.opacity = "0.92";
-
-  const resumeBtn = document.createElement("button");
-  resumeBtn.type = "button";
-  resumeBtn.textContent = "Reanudar";
-  resumeBtn.style.border = "0";
-  resumeBtn.style.borderRadius = "12px";
-  resumeBtn.style.padding = ".72rem 1.1rem";
-  resumeBtn.style.fontWeight = "800";
-  resumeBtn.style.cursor = "pointer";
-  resumeBtn.style.background = "#6B4EE6";
-  resumeBtn.style.color = "#fff";
-
-  resumeBtn.addEventListener("click", () => resumeSudoku());
-
-  card.appendChild(title);
-  card.appendChild(text);
-  card.appendChild(resumeBtn);
-  overlay.appendChild(card);
-  document.body.appendChild(overlay);
-}
-
-function hideSudokuPausePopup() {
-  const existing = document.getElementById("sudoku-pause-popup");
-  if (existing) existing.remove();
-}
-
-function pauseSudoku() {
-  if (sudokuPaused) return;
-  sudokuPaused = true;
-  if (timerInterval) clearInterval(timerInterval);
-  setSudokuPausedUi(true);
-  showSudokuPausePopup();
-}
-
-function resumeSudoku() {
-  if (!sudokuPaused) return;
-  sudokuPaused = false;
-  hideSudokuPausePopup();
-  setSudokuPausedUi(false);
-  startTimer(false);
-}
-
-function setNoteMode(on) {
-  noteMode = !!on;
-  syncNoteModeUi();
-  setStatus(noteMode ? "Modo notas: ACTIVADO (N para desactivar)" : "Modo notas: desactivado");
-}
+let roundCompleted = false;
 
 // ===== Seeds de prueba por dificultad (TEMP: luego vendrán de BD) =====
 // Nota: aquí la dificultad es el label (Principiante..Profesional)
@@ -1117,88 +989,37 @@ function showSudokuCompletionPopup(score) {
 }
 
 function calculateSudokuScore() {
-  const TIME_PENALTY_PER_SECOND = 2;
-  const HINT_PENALTY = 75;
+  const { correct } = getProgress();
 
-  const penalty = seconds * TIME_PENALTY_PER_SECOND + hintsUsed * HINT_PENALTY;
-  return Math.max(0, 1000 - penalty);
+  const CORRECT_CELL_POINTS = 35;
+  const TIME_PENALTY_PER_SECOND = 2;
+  const ERROR_PENALTY = 120;
+  const HINT_PENALTY = 90;
+
+  const progressPoints = Math.max(0, correct * CORRECT_CELL_POINTS);
+  const timePenalty = Math.max(0, seconds * TIME_PENALTY_PER_SECOND);
+  const errorPenalty = Math.max(0, errorCount * ERROR_PENALTY);
+  const hintPenalty = Math.max(0, hintsUsed * HINT_PENALTY);
+
+  const score = progressPoints - timePenalty - errorPenalty - hintPenalty;
+  return Math.max(0, Math.round(score));
 }
 
-async function finishSudokuWithScore() {
+function finishSudokuWithScore() {
   if (roundCompleted) return;
   roundCompleted = true;
 
   const score = calculateSudokuScore();
-
   setStatus(
-    `¡Sudoku completado! Puntaje final: ${score} (tiempo: ${seconds}s, pistas: ${hintsUsed}).`,
+    `¡Sudoku completado! Puntaje final: ${score} (tiempo: ${seconds}s, errores: ${errorCount}, pistas: ${hintsUsed}/${hintsLimit}).`,
     true,
   );
-
   if (timerInterval) clearInterval(timerInterval);
-
-  try {
-    const accessToken = authStorage.getAccessToken();
-
-    if (accessToken) {
-      await apiClient.createGameSession(accessToken, {
-        juegoId: GAME_ID_SUDOKU,
-        puntaje: score,
-        resultado: "victoria",
-        cambioElo: score > 700 ? 15 : score > 400 ? 10 : 5,
-      });
-      console.log("Partida registrada con puntaje:", Math.floor(score/4));
-      await apiClient.addExperience(accessToken,Math.floor(score/4));
-    }
-  } catch (error) {
-    console.error("No se pudo registrar la partida:", error);
-  }
 
   showSudokuCompletionPopup(score);
 }
 
-function syncSudokuStatsUi() {
-  if (errorsCountEl) errorsCountEl.textContent = `Errores: ${errorCount}`;
-  if (hintsUsedEl) hintsUsedEl.textContent = `Pistas: ${hintsUsed}`;
-}
-
-function getCorrectCountsByNumber() {
-  const counts = Array(10).fill(0);
-  if (!tableroActual?.length || !solucion?.length) return counts;
-
-  for (let r = 0; r < 9; r += 1) {
-    for (let c = 0; c < 9; c += 1) {
-      const v = tableroActual[r][c];
-      if (v !== 0 && v === solucion[r][c]) counts[v] += 1;
-    }
-  }
-  return counts;
-}
-
-function updateKeypadAvailability() {
-  if (!keypadEl) return;
-  const counts = getCorrectCountsByNumber();
-
-  keypadEl.querySelectorAll("button.chip.number").forEach((btn) => {
-    const n = Number(btn.dataset.num || btn.textContent || 0);
-    const complete = n >= 1 && n <= 9 ? counts[n] >= 9 : false;
-
-    btn.disabled = complete;
-    btn.classList.toggle("num-unavailable", complete);
-    btn.setAttribute("aria-disabled", complete ? "true" : "false");
-  });
-}
-
 function buildSudokuBoard(seed, huecos) {
-  sudokuPaused = false;
-  hideSudokuPausePopup();
-  setSudokuPausedUi(false);
-  noteMode = false;
-  syncNoteModeUi();
-  syncHighlightsUi();
-  errorCount = 0;
-  hintsUsed = 0;
-  syncSudokuStatsUi();
 
   seedActual = seed;
   huecosActual = Number.isInteger(huecos) ? huecos : 40;
@@ -1217,8 +1038,11 @@ function buildSudokuBoard(seed, huecos) {
 
   // 5) UI
   createBoard();
+  hintsUsed = 0;
+  errorCount = 0;
+  hintsLimit = hintLimitByDifficulty[currentDifficulty.key] || 3;
   roundCompleted = false;
-  setStatus(`Selecciona una celda para comenzar. Puntaje inicial: 1000.`);
+  setStatus(`Selecciona una celda para comenzar. Pistas disponibles: ${hintsLimit}.`);
   updateProgress();
   updateKeypadAvailability();
   startTimer(true);
@@ -1226,7 +1050,7 @@ function buildSudokuBoard(seed, huecos) {
 
 
 function fillSelected(value) {
-  if (sudokuPaused) return;
+  if (roundCompleted) return;
   if (!selectedCell) return;
 
   const row = Number(selectedCell.dataset.row);
@@ -1257,7 +1081,8 @@ function fillSelected(value) {
 
   // Rango válido
   if (num < 1 || num > 9 || Number.isNaN(num)) {
-    setStatus("Número inválido (1-9)");
+    errorCount += 1;
+    setStatus(`Número inválido (1-9). Errores: ${errorCount}`);
     return;
   }
 
@@ -1280,8 +1105,8 @@ function fillSelected(value) {
   updateProgress?.();
 
   if (!valido) {
-    setStatus("Movimiento viola reglas del Sudoku");
-    applySelectionHighlights();
+    errorCount += 1;
+    setStatus(`Movimiento viola reglas del Sudoku. Errores: ${errorCount}`);
     return;
   }
 
@@ -1535,7 +1360,13 @@ function setupControls() {
   clearBtn.addEventListener("click", () => fillSelected(""));
 
   hintBtn.addEventListener("click", () => {
-    if (sudokuPaused) return;
+    if (roundCompleted) return;
+
+    if (hintsUsed >= hintsLimit) {
+      setStatus(`No quedan pistas para esta dificultad (${hintsLimit}).`);
+      return;
+    }
+
     const resultado = darPistaAleatoria(tableroActual, solucion);
 
     if (!resultado.ok) {
@@ -1545,7 +1376,6 @@ function setupControls() {
 
     // Aplicar pista y refrescar UI
     hintsUsed += 1;
-    syncSudokuStatsUi();
     const { row, col, valor } = resultado;
     tableroActual[row][col] = valor;
 
@@ -1559,7 +1389,7 @@ function setupControls() {
     if (estaResuelto(tableroActual)) {
       finishSudokuWithScore();
     } else {
-      setStatus(`Pista aplicada. Pistas usadas: ${hintsUsed}.`);
+      setStatus(`Pista aplicada. Pistas usadas: ${hintsUsed}/${hintsLimit}.`);
     }
   });
 
