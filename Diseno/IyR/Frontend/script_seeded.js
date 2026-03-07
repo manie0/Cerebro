@@ -22,6 +22,15 @@ const difficultyLevels = [
   { key: "maestro", label: "Profesional", givens: 24 },
 ];
 
+const hintLimitByDifficulty = {
+  "muy-facil": 6,
+  facil: 5,
+  medio: 4,
+  dificil: 3,
+  experto: 2,
+  maestro: 1,
+};
+
 let currentDifficulty = difficultyLevels[2];
 
 // ===== Theme settings =====
@@ -137,6 +146,10 @@ let selectedCell = null;
 let seedActual = null;
 let authSession = null;
 let authBusy = false;
+let hintsUsed = 0;
+let hintsLimit = hintLimitByDifficulty[currentDifficulty.key] || 3;
+let errorCount = 0;
+let roundCompleted = false;
 
 // ===== Seeds de prueba por dificultad (TEMP: luego vendrán de BD) =====
 // Nota: aquí la dificultad es el label (Principiante..Profesional)
@@ -791,7 +804,81 @@ function setStatus(message, ok = false) {
 }
 
 
+function showSudokuCompletionPopup(score) {
+  const existing = document.getElementById("sudoku-completion-popup");
+  if (existing) existing.remove();
+
+  const overlay = document.createElement("div");
+  overlay.id = "sudoku-completion-popup";
+  overlay.setAttribute("role", "alertdialog");
+  overlay.style.position = "fixed";
+  overlay.style.inset = "0";
+  overlay.style.background = "rgba(0,0,0,0.65)";
+  overlay.style.display = "grid";
+  overlay.style.placeItems = "center";
+  overlay.style.zIndex = "9999";
+
+  const card = document.createElement("div");
+  card.style.width = "min(92vw, 420px)";
+  card.style.padding = "1.1rem 1rem";
+  card.style.borderRadius = "14px";
+  card.style.background = "#111827";
+  card.style.color = "#f9fafb";
+  card.style.textAlign = "center";
+  card.style.boxShadow = "0 10px 35px rgba(0,0,0,0.35)";
+
+  const title = document.createElement("h3");
+  title.textContent = "¡Sudoku completado!";
+  title.style.margin = "0 0 .35rem";
+
+  const text = document.createElement("p");
+  text.textContent = `Puntaje: ${score}. Reiniciando tablero...`;
+  text.style.margin = "0";
+
+  card.appendChild(title);
+  card.appendChild(text);
+  overlay.appendChild(card);
+  document.body.appendChild(overlay);
+
+  setTimeout(() => {
+    overlay.remove();
+    loadDifficulty(currentDifficulty.key);
+  }, 2200);
+}
+
+function calculateSudokuScore() {
+  const { correct } = getProgress();
+
+  const CORRECT_CELL_POINTS = 35;
+  const TIME_PENALTY_PER_SECOND = 2;
+  const ERROR_PENALTY = 120;
+  const HINT_PENALTY = 90;
+
+  const progressPoints = Math.max(0, correct * CORRECT_CELL_POINTS);
+  const timePenalty = Math.max(0, seconds * TIME_PENALTY_PER_SECOND);
+  const errorPenalty = Math.max(0, errorCount * ERROR_PENALTY);
+  const hintPenalty = Math.max(0, hintsUsed * HINT_PENALTY);
+
+  const score = progressPoints - timePenalty - errorPenalty - hintPenalty;
+  return Math.max(0, Math.round(score));
+}
+
+function finishSudokuWithScore() {
+  if (roundCompleted) return;
+  roundCompleted = true;
+
+  const score = calculateSudokuScore();
+  setStatus(
+    `¡Sudoku completado! Puntaje final: ${score} (tiempo: ${seconds}s, errores: ${errorCount}, pistas: ${hintsUsed}/${hintsLimit}).`,
+    true,
+  );
+  if (timerInterval) clearInterval(timerInterval);
+
+  showSudokuCompletionPopup(score);
+}
+
 function buildSudokuBoard(seed, huecos) {
+
   seedActual = seed;
   huecosActual = Number.isInteger(huecos) ? huecos : 40;
 
@@ -809,13 +896,18 @@ function buildSudokuBoard(seed, huecos) {
 
   // 5) UI
   createBoard();
-  setStatus(`Selecciona una celda para comenzar.`);
+  hintsUsed = 0;
+  errorCount = 0;
+  hintsLimit = hintLimitByDifficulty[currentDifficulty.key] || 3;
+  roundCompleted = false;
+  setStatus(`Selecciona una celda para comenzar. Pistas disponibles: ${hintsLimit}.`);
   updateProgress();
   startTimer(true);
 }
 
 
 function fillSelected(value) {
+  if (roundCompleted) return;
   if (!selectedCell) return;
 
   const row = Number(selectedCell.dataset.row);
@@ -843,7 +935,8 @@ function fillSelected(value) {
 
   // Rango válido
   if (num < 1 || num > 9 || Number.isNaN(num)) {
-    setStatus("Número inválido (1-9)");
+    errorCount += 1;
+    setStatus(`Número inválido (1-9). Errores: ${errorCount}`);
     return;
   }
 
@@ -859,13 +952,13 @@ function fillSelected(value) {
   updateProgress?.();
 
   if (!valido) {
-    setStatus("Movimiento viola reglas del Sudoku");
+    errorCount += 1;
+    setStatus(`Movimiento viola reglas del Sudoku. Errores: ${errorCount}`);
     return;
   }
 
   if (estaResuelto(tableroActual)) {
-    setStatus("¡Sudoku completado correctamente!", true);
-    if (timerInterval) clearInterval(timerInterval);
+    finishSudokuWithScore();
     return;
   }
 
@@ -1111,6 +1204,13 @@ function setupControls() {
   clearBtn.addEventListener("click", () => fillSelected(""));
 
   hintBtn.addEventListener("click", () => {
+    if (roundCompleted) return;
+
+    if (hintsUsed >= hintsLimit) {
+      setStatus(`No quedan pistas para esta dificultad (${hintsLimit}).`);
+      return;
+    }
+
     const resultado = darPistaAleatoria(tableroActual, solucion);
 
     if (!resultado.ok) {
@@ -1119,6 +1219,7 @@ function setupControls() {
     }
 
     // Aplicar pista y refrescar UI
+    hintsUsed += 1;
     const { row, col, valor } = resultado;
     tableroActual[row][col] = valor;
 
@@ -1129,10 +1230,9 @@ function setupControls() {
     updateProgress();
 
     if (estaResuelto(tableroActual)) {
-      setStatus("¡Excelente! Completaste el Sudoku correctamente.", true);
-      if (timerInterval) clearInterval(timerInterval);
+      finishSudokuWithScore();
     } else {
-      setStatus("Pista aplicada. ¡Sigue así!");
+      setStatus(`Pista aplicada. Pistas usadas: ${hintsUsed}/${hintsLimit}.`);
     }
   });
 
@@ -1604,8 +1704,8 @@ async function bootstrapApp() {
   setupControls();
   initProfileUi();
   loadDifficulty(currentDifficulty.key);
-  setTab("inicio");
-  await restoreAuthSession();
+  setTab("juego");
+  restoreAuthSession().catch(() => {});
 }
 
 bootstrapApp();
