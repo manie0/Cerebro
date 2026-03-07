@@ -1887,8 +1887,7 @@ async function bootstrapApp() {
   initProfileUi();
   loadDifficulty(currentDifficulty.key);
   setTab("juego");
-  await restoreAuthSession();
-  await showModeDetail("sudoku");
+  restoreAuthSession().catch(() => {});
 }
 
 bootstrapApp();
