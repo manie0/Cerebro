@@ -76,6 +76,12 @@ const loginTab = document.getElementById("login-tab");
 const perfilTab = document.getElementById("perfil-tab");
 const difficultySelect = document.getElementById("difficulty-select");
 const difficultyLabel = document.getElementById("difficulty-label");
+const newGameBtn = document.getElementById("new-game-btn");
+const pauseBtn = document.getElementById("pause-btn");
+const toggleNotesBtn = document.getElementById("toggle-notes");
+const toggleHighlightsBtn = document.getElementById("toggle-highlights");
+const errorsCountEl = document.getElementById("errors-count");
+const hintsUsedEl = document.getElementById("hints-used");
 const progressFill = document.getElementById("progress-fill");
 const progressText = document.getElementById("progress-text");
 const profileAvatarEl = document.getElementById("profile-avatar");
@@ -131,7 +137,15 @@ const resetPasswordConfirmInput = document.getElementById("reset-password-confir
 const authMessageEl = document.getElementById("auth-message");
 const profileNameEl = document.getElementById("profile-name");
 const profileTitleEl = document.getElementById("profile-title");
-
+const profileLevelBadgeEl = document.querySelector(
+  "#open-avatar-picker .level-badge",
+);
+const profileLevelFillEl = document.querySelector(
+  "#perfil-tab .profile-level-wrap .level-fill",
+);
+const profileLevelTextEl = document.querySelector(
+  "#perfil-tab .profile-level-wrap .level-text",
+);
 // ===== Runtime state =====
 let noteMode = false; // 
 let seconds = 0;
@@ -199,7 +213,7 @@ const seedsPorDificultad = {
 };
 
 let huecosActual = 40;
-
+const GAME_ID_SUDOKU = "uVsB-k2rjora"; // id de juego SUDOKU
 
 const profileModeStats = {
   sudoku: [
@@ -426,17 +440,57 @@ function renderStreakCalendar() {
   }
 }
 
-function renderModeDetail(mode) {
-  const selectedMode = profileModeStats[mode] ? mode : "sudoku";
-  modeCardBtns.forEach((btn) => {
-    btn.classList.toggle("active", btn.dataset.mode === selectedMode);
+async function loadSudokuStatsIntoProfile() {
+  if (!isAuthenticated()) return;
+
+  try {
+    const perfil = await apiClient.getMyProfile(authSession.accessToken);
+    const stats = await apiClient.getMyGameStats(authSession.accessToken, GAME_ID_SUDOKU);
+
+    
+    if (!stats || typeof stats !== "object") {
+      console.warn("[stats] respuesta inválida de getMyGameStats");
+      return;
+    }
+    syncProfileProgress(perfil);
+    profileModeStats.sudoku = [
+      `Partidas jugadas: ${stats.partidasJugadas ?? 0}`,
+      `Elo: ${stats.elo ?? 0}`,
+      stats.ligaId ? `Liga: ${stats.ligaId}` : "Liga: -",
+    ];
+  } catch (e) {
+    console.warn("Fallo cargando stats sudoku:", e);
+  }
+}
+
+async function showModeDetail(modeKey) {
+
+  // Marcar visualmente el modo activo (Sudoku/Torneos/PvP)
+  modeCardBtns?.forEach((card) => {
+    card.classList.toggle("active", card.dataset.mode === modeKey);
   });
-  modeDetailTitle.textContent = selectedMode[0].toUpperCase() + selectedMode.slice(1);
+
+  /*
+  if (modeKey === "sudoku") {
+    await loadSudokuStatsIntoProfile();
+  }
+  */
+
+  const stats = profileModeStats[modeKey];
+  if (!stats || !modeDetailTitle || !modeDetailList) return;
+
+  const titleMap = {
+    sudoku: "Sudoku",
+    torneos: "Torneos",
+    pvp: "PvP",
+  };
+
+  modeDetailTitle.textContent = `Estadísticas · ${titleMap[modeKey]}`;
   modeDetailList.innerHTML = "";
-  profileModeStats[selectedMode].forEach((stat) => {
-    const item = document.createElement("li");
-    item.textContent = stat;
-    modeDetailList.appendChild(item);
+  stats.forEach((line) => {
+    const li = document.createElement("li");
+    li.textContent = line;
+    modeDetailList.appendChild(li);
   });
 }
 
@@ -449,7 +503,7 @@ function initProfileUi() {
   setProfileFrame("frame-royal");
   setAvatarPickerTab("avatar");
   renderFrameOptions();
-  renderModeDetail("sudoku");
+  showModeDetail("sudoku");
 
   pickerTabBtns.forEach((btn) => {
     btn.addEventListener("click", () => setAvatarPickerTab(btn.dataset.pickerTab));
@@ -482,7 +536,7 @@ function initProfileUi() {
   });
 
   modeCardBtns.forEach((btn) => {
-    btn.addEventListener("click", () => renderModeDetail(btn.dataset.mode));
+    btn.addEventListener("click", () => showModeDetail(btn.dataset.mode));
   });
 
   closePickerBtns.forEach((btn) => {
@@ -497,14 +551,17 @@ function initProfileUi() {
 
 
 // ===== Sudoku game logic =====
-function setTab(mode) {
+async function setTab(mode) {
   const isHome = mode === "inicio";
   const isGame = mode === "juego";
   const isProfile = mode === "perfil";
   const isTorneos = mode === "torneos";
   const isPvp = mode === "pvp";
   const isLogin = mode === "login";
-
+  if(mode === "perfil"){
+    await loadSudokuStatsIntoProfile();
+    await showModeDetail("sudoku");
+  }
   inicioTab.classList.toggle("hidden", !isHome);
   juegoTab.classList.toggle("hidden", !isGame);
   perfilTab.classList.toggle("hidden", !isProfile);
@@ -573,20 +630,83 @@ function getProfileDisplayName(user) {
   return `Jugador#${id.slice(-4)}`;
 }
 
+// ===== Helpers nuevos: XP -> siguiente nivel =====
+function xpParaSiguienteNivel(nivel) {
+  const lvl = Number(nivel);
+  if (lvl >= 1 && lvl <= 10) return lvl * 100;
+  if (lvl >= 11 && lvl <= 30) return lvl * 150;
+  if (lvl >= 31 && lvl <= 50) return lvl * 250;
+  return lvl + 250;
+}
+
+// ===== Helper nuevo: pinta nivel/racha/barra usando datos de profiles/me =====
+function syncProfileProgress(user) {
+  if (!profileLevelBadgeEl && !profileLevelFillEl && !profileLevelTextEl) {
+    return;
+  }
+
+  if (!isAuthenticated()) {
+    if (streakCountEl) streakCountEl.textContent = "0";
+    if (profileLevelBadgeEl) profileLevelBadgeEl.textContent = "47";
+    if (profileLevelFillEl) profileLevelFillEl.style.width = "68%";
+    if (profileLevelTextEl)
+      profileLevelTextEl.textContent = "Nivel 47 · 680 / 1000 XP";
+    return;
+  }
+
+  const nivel = Number(user?.nivel ?? 0);
+  const experiencia = Number(user?.experiencia ?? 0);
+  const rachaActual = Number(user?.rachaActual ?? 0);
+
+  if (streakCountEl && Number.isFinite(rachaActual)) {
+    streakCountEl.textContent = String(rachaActual);
+  }
+
+  if (!Number.isFinite(nivel) || nivel <= 0) {
+    return;
+  }
+
+  const xpNext = xpParaSiguienteNivel(nivel);
+  const safeXpNext = Number.isFinite(xpNext) && xpNext > 0 ? xpNext : 1000;
+  const safeXp = Number.isFinite(experiencia) && experiencia >= 0 ? experiencia : 0;
+  const pct = Math.max(0, Math.min(100, (safeXp / safeXpNext) * 100));
+
+  if (profileLevelBadgeEl) profileLevelBadgeEl.textContent = String(nivel);
+  if (profileLevelFillEl) profileLevelFillEl.style.width = `${pct}%`;
+  if (profileLevelTextEl) {
+    profileLevelTextEl.textContent = `Nivel ${nivel} · ${safeXp} / ${safeXpNext} XP`;
+  }
+}
+
 function syncProfileIdentity() {
   if (!profileNameEl || !profileTitleEl) return;
 
   if (!isAuthenticated()) {
     profileNameEl.textContent = DEFAULT_PROFILE_NAME;
     profileTitleEl.textContent = DEFAULT_PROFILE_TITLE;
+    syncProfileProgress(null);
     return;
   }
 
   const user = authSession?.user || {};
   profileNameEl.textContent = getProfileDisplayName(user);
-  profileTitleEl.textContent = user.email
-    ? `Correo: ${user.email}`
-    : "Sesion activa";
+
+  //validar si hay titulo activo en user, si no en authSession.profile, si no null
+  const tituloTexto =
+    user.tituloActivoTexto ??
+    authSession?.profile?.tituloActivoTexto ??
+    null;
+
+  if (tituloTexto) {
+    profileTitleEl.textContent = `Título: ${tituloTexto}`;
+  } else if (user.email) {
+    profileTitleEl.textContent = `Correo: ${user.email}`;
+  } else {
+    profileTitleEl.textContent = "Sesión activa";
+  }
+
+  // NUEVO
+  syncProfileProgress(user);
 }
 
 function syncAuthUi() {
@@ -621,6 +741,11 @@ function saveAuthSession(session) {
 
   syncAuthUi();
   syncProfileIdentity();
+  
+  // Si ya está autenticado, refresca stats del modo actual (o sudoku por defecto)
+  if (isAuthenticated()) {
+    showModeDetail("sudoku");
+  }
 }
 
 async function hydrateSession(session) {
@@ -642,10 +767,27 @@ async function hydrateSession(session) {
       (verifiedUser.email ? String(verifiedUser.email).split("@")[0] : ""),
   };
 
-  return {
+  const hydrated = {
     ...session,
     user,
   };
+
+  // NUEVO: traer nivel/racha/experiencia desde profiles/me
+  try {
+    const perfil = await apiClient.getMyProfile(hydrated.accessToken);
+
+    if (perfil) {
+      hydrated.user = {
+        ...(hydrated.user || {}),
+        ...perfil,
+      };
+      hydrated.profile = perfil;
+    }
+  } catch (error) {
+    console.warn("No se pudo cargar el perfil del usuario.", error);
+  }
+
+  return hydrated;
 }
 
 async function tryRefreshSession(session) {
@@ -902,6 +1044,7 @@ function buildSudokuBoard(seed, huecos) {
   roundCompleted = false;
   setStatus(`Selecciona una celda para comenzar. Pistas disponibles: ${hintsLimit}.`);
   updateProgress();
+  updateKeypadAvailability();
   startTimer(true);
 }
 
@@ -912,6 +1055,7 @@ function fillSelected(value) {
 
   const row = Number(selectedCell.dataset.row);
   const col = Number(selectedCell.dataset.col);
+  const previousValue = tableroActual?.[row]?.[col] ?? 0;
 
   // No tocar celdas fijas
   if (puzzleInicial[row][col] !== 0) {
@@ -930,6 +1074,8 @@ function fillSelected(value) {
     selectedCell.classList.remove("error");
     setStatus("Celda borrada");
     updateProgress?.();
+    updateKeypadAvailability();
+    applySelectionHighlights();
     return;
   }
 
@@ -944,6 +1090,13 @@ function fillSelected(value) {
   tableroActual[row][col] = num;
   limpiarNotasCelda(notas, row, col);
   selectedCell.textContent = String(num);
+
+  // Error si el número no coincide con la solución (solo si cambió el valor)
+  if (previousValue !== num && solucion?.[row]?.[col] && num !== solucion[row][col]) {
+    errorCount += 1;
+    syncSudokuStatsUi();
+    setStatus(`Número incorrecto. Errores: ${errorCount}.`);
+  }
 
   // Validar reglas (si es inválido, queda pintado en rojo)
   const valido = esMovimientoValido(tableroActual, row, col, num);
@@ -963,11 +1116,8 @@ function fillSelected(value) {
   }
 
   setStatus("Movimiento aplicado");
-}
-
-function setNoteMode(on) {
-  noteMode = !!on;
-  setStatus(noteMode ? "Modo notas: ACTIVADO (N para desactivar)" : "Modo notas: desactivado");
+  updateKeypadAvailability();
+  applySelectionHighlights();
 }
 
 function renderCellContent(cellEl, r, c) {
@@ -1035,6 +1185,7 @@ function handleNoteInput(num) {
 function createBoard() {
   boardEl.innerHTML = "";
   selectedCell = null;
+  clearSelectionHighlights();
 
   for (let r = 0; r < 9; r += 1) {
     for (let c = 0; c < 9; c += 1) {
@@ -1066,6 +1217,7 @@ function createBoard() {
         if (selectedCell) selectedCell.classList.remove("selected");
         selectedCell = cell;
         cell.classList.add("selected");
+        applySelectionHighlights();
       });
 
       boardEl.appendChild(cell);
@@ -1148,14 +1300,18 @@ function createKeypad() {
     btn.type = "button";
     btn.className = "chip number";
     btn.textContent = n;
+    btn.dataset.num = String(n);
 
     btn.addEventListener("click", () => {
+      if (sudokuPaused) return;
       if (noteMode) handleNoteInput(n);
       else fillSelected(n);
     });
 
     keypadEl.appendChild(btn);
   }
+
+  updateKeypadAvailability();
 }
 
 function startTimer(reset = false) {
@@ -1228,6 +1384,7 @@ function setupControls() {
 
     createBoard();
     updateProgress();
+    updateKeypadAvailability();
 
     if (estaResuelto(tableroActual)) {
       finishSudokuWithScore();
@@ -1238,6 +1395,7 @@ function setupControls() {
 
   // ✅ Controles teclado: números / borrar / modo notas
   document.addEventListener("keydown", (event) => {
+    if (sudokuPaused) return;
     if (!selectedCell) return;
 
     const row = Number(selectedCell.dataset.row);
@@ -1245,8 +1403,7 @@ function setupControls() {
 
     // Toggle modo notas con N
     if (event.key.toLowerCase() === "n") {
-      noteMode = !noteMode;
-      setStatus(noteMode ? "Modo notas: ACTIVADO (N para desactivar)" : "Modo notas: desactivado");
+      setNoteMode(!noteMode);
       return;
     }
 
@@ -1281,6 +1438,28 @@ function setupControls() {
 
   difficultySelect.addEventListener("change", (event) => {
     loadDifficulty(event.target.value);
+  });
+
+  newGameBtn?.addEventListener("click", () => {
+    loadDifficulty(currentDifficulty.key);
+  });
+
+  pauseBtn?.addEventListener("click", () => {
+    if (sudokuPaused) resumeSudoku();
+    else pauseSudoku();
+  });
+
+  toggleNotesBtn?.addEventListener("click", () => {
+    if (sudokuPaused) return;
+    setNoteMode(!noteMode);
+  });
+
+  toggleHighlightsBtn?.addEventListener("click", () => {
+    if (sudokuPaused) return;
+    highlightEnabled = !highlightEnabled;
+    syncHighlightsUi();
+    if (highlightEnabled) applySelectionHighlights();
+    else clearSelectionHighlights();
   });
 
   playNowBtn.addEventListener("click", () => setTab("juego"));
@@ -1702,11 +1881,14 @@ async function bootstrapApp() {
   createKeypad();
   initializeDifficultyOptions();
   setupControls();
+  syncNoteModeUi();
+  syncHighlightsUi();
+  syncSudokuStatsUi();
   initProfileUi();
   loadDifficulty(currentDifficulty.key);
-  setTab("inicio");
+  setTab("juego");
   await restoreAuthSession();
+  await showModeDetail("sudoku");
 }
 
 bootstrapApp();
-

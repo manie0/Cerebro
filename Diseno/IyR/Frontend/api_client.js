@@ -201,6 +201,14 @@ const apiClient = {
       token: accessToken,
     });
   },
+  
+  addExperience(accessToken, experiencia) {
+    return request("profiles/add-experience", {
+      method: "POST",
+      token: accessToken,
+      body: { experiencia },
+    });
+  },
 
   getTorneos(accessToken) {
     return request("torneos", {
@@ -208,6 +216,31 @@ const apiClient = {
       token: accessToken,
     });
   },
+
+  getMyGameStats(accessToken, juegoId) {
+    return request("game-stats/me", {
+      method: "POST",
+      token: accessToken,
+      body: { juegoId },
+    });
+  },
+
+  createGameSession(accessToken, payload) {
+    return request("game-sessions", {
+      method: "POST",
+      token: accessToken,
+      body: payload,
+    });
+  },
+
+  updateMyGameStats(accessToken, payload) {
+    return request("game-stats/me", {
+      method: "PATCH",
+      token: accessToken,
+      body: payload,
+    });
+  },
+
 };
 
 export { apiClient, authStorage, request };
